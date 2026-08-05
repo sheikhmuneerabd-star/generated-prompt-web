@@ -128,12 +128,10 @@ export default function PromptForgePage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [showResult, setShowResult] = useState<boolean>(false);
+  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultRef = useRef<HTMLDivElement | null>(null);
-  // Spotlight is driven via direct DOM mutation (not React state) so mousemove
-  // never triggers a full re-render / repaint of the blurred background layers.
-  const spotlightRef = useRef<HTMLDivElement | null>(null);
 
   const wordCount = useMemo(
     () => (inputPrompt.trim().length > 0 ? inputPrompt.trim().split(/\s+/).filter(Boolean).length : 0),
@@ -152,21 +150,11 @@ export default function PromptForgePage() {
   }, []);
 
   useEffect(() => {
-    let raf = 0;
     const handleMouseMove = (e: MouseEvent) => {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const el = spotlightRef.current;
-        if (el) {
-          el.style.background = `radial-gradient(650px circle at ${e.clientX}px ${e.pageY - window.scrollY}px, rgba(255,138,76,0.05), transparent 40%)`;
-        }
-      });
+      setMousePos({ x: e.clientX, y: e.clientY });
     };
     window.addEventListener("mousemove", handleMouseMove);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      if (raf) cancelAnimationFrame(raf);
-    };
+    return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
   const generateImprovements = useCallback(
@@ -372,32 +360,40 @@ Before responding, silently:
   return (
     <div className={`${syne.variable} ${outfit.variable} relative min-h-screen w-full overflow-hidden bg-[#07080C] text-[#F6F4EF] antialiased font-[family-name:var(--font-outfit)]`}>
       {/* ===== BACKGROUND SYSTEM ===== */}
-      {/* Isolated composite layer so scroll never re-paints stale blur frames */}
-      <div className="pointer-events-none absolute inset-0 [transform:translateZ(0)] [will-change:transform] isolate">
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:64px_64px] [mask-image:radial-gradient(ellipse_80%_60%_at_50%_0%,black_40%,transparent_100%)]"
-        />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:64px_64px] [mask-image:radial-gradient(ellipse_80%_60%_at_50%_0%,black_40%,transparent_100%)]"
+      />
 
-        {/* Aurora blooms — ember (amber) + AI (violet) */}
-        <div
-          aria-hidden="true"
-          className="absolute -top-48 left-[8%] h-[520px] w-[620px] rounded-full bg-[#FF7A45]/[0.09] blur-[190px] motion-safe:animate-[drift1_16s_ease-in-out_infinite]"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute top-[22%] -right-40 h-[560px] w-[640px] rounded-full bg-[#7C6CFF]/[0.10] blur-[200px] motion-safe:animate-[drift2_19s_ease-in-out_infinite]"
-        />
-        <div
-          aria-hidden="true"
-          className="absolute bottom-[-10%] left-[35%] h-[380px] w-[480px] rounded-full bg-[#FFC65C]/[0.05] blur-[170px] motion-safe:animate-[drift3_21s_ease-in-out_infinite]"
-        />
+      {/* Noise texture for tactile premium feel */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 opacity-[0.035] mix-blend-overlay"
+        style={{
+          backgroundImage:
+            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E\")",
+        }}
+      />
 
-        {/* Ember particles rising */}
+      {/* Aurora blooms — ember (amber) + AI (violet) */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-48 left-[8%] h-[520px] w-[620px] rounded-full bg-[#FF7A45]/[0.09] blur-[190px] motion-safe:animate-[drift1_16s_ease-in-out_infinite]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute top-[22%] -right-40 h-[560px] w-[640px] rounded-full bg-[#7C6CFF]/[0.10] blur-[200px] motion-safe:animate-[drift2_19s_ease-in-out_infinite]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-[-10%] left-[35%] h-[380px] w-[480px] rounded-full bg-[#FFC65C]/[0.05] blur-[170px] motion-safe:animate-[drift3_21s_ease-in-out_infinite]"
+      />
+
+      {/* Ember particles rising */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
         {emberParticles.map((p, idx) => (
           <span
             key={idx}
-            aria-hidden="true"
             className="absolute bottom-0 rounded-full bg-gradient-to-t from-[#FF7A45] to-[#FFC65C] motion-safe:animate-[emberRise_var(--dur)_ease-in_infinite]"
             style={{
               left: p.left,
@@ -410,14 +406,16 @@ Before responding, silently:
             }}
           />
         ))}
-
-        {/* Mouse spotlight — absolute + ref-mutated, never triggers React re-render */}
-        <div
-          ref={spotlightRef}
-          aria-hidden="true"
-          className="absolute inset-0 motion-reduce:hidden"
-        />
       </div>
+
+      {/* Mouse spotlight */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 transition-all duration-500 motion-reduce:hidden"
+        style={{
+          background: `radial-gradient(650px circle at ${mousePos.x}px ${mousePos.y}px, rgba(255,138,76,0.05), transparent 40%)`,
+        }}
+      />
 
       {/* ===== NAVBAR ===== */}
       <nav className="relative z-20 mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
@@ -458,6 +456,12 @@ Before responding, silently:
           <span className="block text-white">Raw ideas,</span>
           <span className="relative block">
             <span className="bg-gradient-to-r from-[#FF9B5C] via-[#FFC65C] to-[#7C6CFF] bg-[length:200%_auto] bg-clip-text text-transparent motion-safe:animate-[shimmer_5s_linear_infinite]">
+              forged into precision
+            </span>
+            <span
+              aria-hidden="true"
+              className="absolute inset-0 -z-10 bg-gradient-to-r from-[#FF7A45]/40 via-[#FFC65C]/25 to-[#7C6CFF]/40 blur-3xl bg-[length:200%_auto] motion-safe:animate-[shimmer_5s_linear_infinite]"
+            >
               forged into precision
             </span>
           </span>
@@ -735,6 +739,7 @@ Before responding, silently:
               title: "Enter your prompt",
               desc: "Type your basic idea — even a rough single sentence works perfectly as a starting point.",
               accent: "#FF9B5C",
+              ring: "border-[#FF7A45]/20",
               glow: "rgba(255,138,76,0.15)",
               iconBg: "bg-[#FF7A45]/10 border-[#FF7A45]/20",
             },
@@ -744,6 +749,7 @@ Before responding, silently:
               title: "Choose your settings",
               desc: "Pick the AI platform you'll use and the enhancement mode that fits your goal.",
               accent: "#B3A8FF",
+              ring: "border-[#7C6CFF]/20",
               glow: "rgba(124,108,255,0.15)",
               iconBg: "bg-[#7C6CFF]/10 border-[#7C6CFF]/20",
             },
@@ -753,6 +759,7 @@ Before responding, silently:
               title: "Copy & dominate",
               desc: "Get your precision-crafted prompt with a full improvement breakdown. Paste and win.",
               accent: "#FFC65C",
+              ring: "border-[#FFC65C]/20",
               glow: "rgba(255,198,92,0.15)",
               iconBg: "bg-[#FFC65C]/10 border-[#FFC65C]/20",
             },
@@ -761,7 +768,8 @@ Before responding, silently:
             return (
               <div
                 key={idx}
-                className="group relative rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center backdrop-blur-xl transition-shadow duration-300"
+                className={`group relative rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center backdrop-blur-xl transition-all duration-300 hover:${item.ring}`}
+                style={{ boxShadow: "none" }}
                 onMouseEnter={(e) => (e.currentTarget.style.boxShadow = `0 0 30px ${item.glow}`)}
                 onMouseLeave={(e) => (e.currentTarget.style.boxShadow = "none")}
               >
