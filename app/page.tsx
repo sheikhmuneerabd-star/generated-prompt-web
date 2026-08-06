@@ -119,6 +119,44 @@ function getDomainLabel(domain: Domain): string {
   return labels[domain];
 }
 
+// Manual rAF-based smooth scroll. Native scrollIntoView({behavior:"smooth"}) is what
+// triggers Chrome's stale-compositor-paint bug with our blurred/will-change layers —
+// this replacement avoids that scroll path entirely and forces a repaint at the end
+// as a safety net so no ghost pixels are left behind.
+function smoothScrollToY(targetY: number, duration = 600) {
+  const startY = window.scrollY;
+  const diff = targetY - startY;
+  if (Math.abs(diff) < 1) return;
+  let startTime: number | null = null;
+
+  const step = (timestamp: number) => {
+    if (startTime === null) startTime = timestamp;
+    const elapsed = timestamp - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = progress < 0.5 ? 2 * progress * progress : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+    window.scrollTo(0, startY + diff * eased);
+
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    } else {
+      requestAnimationFrame(() => {
+        document.body.style.transform = "translateZ(0)";
+        // force sync layout/paint flush
+        void document.body.offsetHeight;
+        document.body.style.transform = "";
+      });
+    }
+  };
+
+  requestAnimationFrame(step);
+}
+
+function scrollElementIntoView(el: HTMLElement | null, offset = 24) {
+  if (!el) return;
+  const targetY = el.getBoundingClientRect().top + window.scrollY - offset;
+  smoothScrollToY(targetY);
+}
+
 export default function PromptForgePage() {
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>("Universal");
   const [selectedMode, setSelectedMode] = useState<Mode>("Detailed");
@@ -128,10 +166,14 @@ export default function PromptForgePage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [showResult, setShowResult] = useState<boolean>(false);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resultRef = useRef<HTMLDivElement | null>(null);
+
+  // Spotlight: DOM-ref + rAF throttled, NO React state -> no full-tree re-render on mousemove
+  const spotlightRef = useRef<HTMLDivElement | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+  const pendingPosRef = useRef<{ x: number; y: number } | null>(null);
 
   const wordCount = useMemo(
     () => (inputPrompt.trim().length > 0 ? inputPrompt.trim().split(/\s+/).filter(Boolean).length : 0),
@@ -150,11 +192,25 @@ export default function PromptForgePage() {
   }, []);
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      setMousePos({ x: e.clientX, y: e.clientY });
+    const applyPos = () => {
+      rafIdRef.current = null;
+      const pos = pendingPosRef.current;
+      if (!pos || !spotlightRef.current) return;
+      spotlightRef.current.style.background = `radial-gradient(650px circle at ${pos.x}px ${pos.y}px, rgba(255,138,76,0.05), transparent 40%)`;
     };
-    window.addEventListener("mousemove", handleMouseMove);
-    return () => window.removeEventListener("mousemove", handleMouseMove);
+
+    const handleMouseMove = (e: MouseEvent) => {
+      pendingPosRef.current = { x: e.clientX, y: e.clientY };
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(applyPos);
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      if (rafIdRef.current !== null) cancelAnimationFrame(rafIdRef.current);
+    };
   }, []);
 
   const generateImprovements = useCallback(
@@ -318,7 +374,7 @@ Before responding, silently:
       setIsLoading(false);
       setShowResult(true);
       setTimeout(() => {
-        resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        scrollElementIntoView(resultRef.current);
       }, 150);
     }, 1200);
 
@@ -354,7 +410,7 @@ Before responding, silently:
   };
 
   const scrollToTool = () => {
-    document.getElementById("tool-section")?.scrollIntoView({ behavior: "smooth" });
+    scrollElementIntoView(document.getElementById("tool-section"));
   };
 
   return (
@@ -378,23 +434,23 @@ Before responding, silently:
       {/* Aurora blooms — ember (amber) + AI (violet) */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-48 left-[8%] h-[520px] w-[620px] rounded-full bg-[#FF7A45]/[0.09] blur-[190px] motion-safe:animate-[drift1_16s_ease-in-out_infinite]"
+        className="pointer-events-none absolute -top-48 left-[8%] h-[520px] w-[620px] rounded-full bg-[#FF7A45]/[0.09] blur-[190px] motion-safe:animate-[drift1_16s_ease-in-out_infinite] will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] isolate"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute top-[22%] -right-40 h-[560px] w-[640px] rounded-full bg-[#7C6CFF]/[0.10] blur-[200px] motion-safe:animate-[drift2_19s_ease-in-out_infinite]"
+        className="pointer-events-none absolute top-[22%] -right-40 h-[560px] w-[640px] rounded-full bg-[#7C6CFF]/[0.10] blur-[200px] motion-safe:animate-[drift2_19s_ease-in-out_infinite] will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] isolate"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-[-10%] left-[35%] h-[380px] w-[480px] rounded-full bg-[#FFC65C]/[0.05] blur-[170px] motion-safe:animate-[drift3_21s_ease-in-out_infinite]"
+        className="pointer-events-none absolute bottom-[-10%] left-[35%] h-[380px] w-[480px] rounded-full bg-[#FFC65C]/[0.05] blur-[170px] motion-safe:animate-[drift3_21s_ease-in-out_infinite] will-change-transform [transform:translateZ(0)] [backface-visibility:hidden] isolate"
       />
 
       {/* Ember particles rising */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden [transform:translateZ(0)]">
         {emberParticles.map((p, idx) => (
           <span
             key={idx}
-            className="absolute bottom-0 rounded-full bg-gradient-to-t from-[#FF7A45] to-[#FFC65C] motion-safe:animate-[emberRise_var(--dur)_ease-in_infinite]"
+            className="absolute bottom-0 rounded-full bg-gradient-to-t from-[#FF7A45] to-[#FFC65C] motion-safe:animate-[emberRise_var(--dur)_ease-in_infinite] will-change-transform"
             style={{
               left: p.left,
               width: p.size,
@@ -408,12 +464,13 @@ Before responding, silently:
         ))}
       </div>
 
-      {/* Mouse spotlight */}
+      {/* Mouse spotlight — updated imperatively via ref, not React state */}
       <div
+        ref={spotlightRef}
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-0 transition-all duration-500 motion-reduce:hidden"
+        className="pointer-events-none fixed inset-0 z-0 motion-reduce:hidden [transform:translateZ(0)]"
         style={{
-          background: `radial-gradient(650px circle at ${mousePos.x}px ${mousePos.y}px, rgba(255,138,76,0.05), transparent 40%)`,
+          background: "radial-gradient(650px circle at 50% 50%, rgba(255,138,76,0.05), transparent 40%)",
         }}
       />
 
@@ -446,7 +503,7 @@ Before responding, silently:
       </nav>
 
       {/* ===== HERO ===== */}
-      <section className="relative z-10 mx-auto max-w-5xl px-6 pb-20 pt-14 text-center">
+      <section className="relative z-10 mx-auto max-w-5xl px-6 pb-12 pt-14 text-center">
         <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-4 py-1.5 backdrop-blur-sm transition-all hover:border-[#FF7A45]/40 hover:shadow-[0_0_20px_rgba(255,138,76,0.15)]">
           <Hammer className="h-3.5 w-3.5 text-[#FFB37A]" />
           <span className="text-xs font-medium text-white/70">The prompt engineering forge</span>
@@ -460,7 +517,7 @@ Before responding, silently:
             </span>
             <span
               aria-hidden="true"
-              className="absolute inset-0 -z-10 bg-gradient-to-r from-[#FF7A45]/40 via-[#FFC65C]/25 to-[#7C6CFF]/40 blur-3xl bg-[length:200%_auto] motion-safe:animate-[shimmer_5s_linear_infinite]"
+              className="absolute inset-0 -z-10 bg-gradient-to-r from-[#FF7A45]/40 via-[#FFC65C]/25 to-[#7C6CFF]/40 blur-3xl bg-[length:200%_auto] motion-safe:animate-[shimmer_5s_linear_infinite] will-change-transform [transform:translateZ(0)]"
             >
               forged into precision
             </span>
@@ -498,7 +555,7 @@ Before responding, silently:
       </section>
 
       {/* ===== MAIN TOOL ===== */}
-      <section id="tool-section" className="relative z-10 mx-auto max-w-5xl px-6 pb-20">
+      <section id="tool-section" className="relative z-10 mx-auto max-w-5xl px-6 pb-12">
         <div className="relative rounded-2xl border border-white/10 bg-white/[0.02] p-6 shadow-2xl shadow-black/40 backdrop-blur-xl sm:p-8">
           <div
             aria-hidden="true"
@@ -786,11 +843,11 @@ Before responding, silently:
       </section>
 
       {/* ===== CTA ===== */}
-      <section className="relative z-10 mx-auto max-w-5xl px-6 pb-20">
+      <section className="relative z-10 mx-auto max-w-5xl px-6 pb-14">
         <div className="relative overflow-hidden rounded-2xl border border-[#FF7A45]/20 bg-gradient-to-br from-[#0d0e14] to-[#120f1f] p-10 text-center sm:p-14">
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute -top-40 left-1/2 h-80 w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-r from-[#FF7A45]/10 to-[#7C6CFF]/10 blur-[120px]"
+            className="pointer-events-none absolute -top-40 left-1/2 h-80 w-[600px] -translate-x-1/2 rounded-full bg-gradient-to-r from-[#FF7A45]/10 to-[#7C6CFF]/10 blur-[120px] will-change-transform [transform:translate(-50%,0)_translateZ(0)]"
           />
           <h2 className={`relative mb-4 text-3xl font-bold text-white sm:text-4xl ${syne.className}`}>
             Ready to unlock AI's full potential?
@@ -837,22 +894,22 @@ Before responding, silently:
           100% { background-position: -200% center; }
         }
         @keyframes drift1 {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          50% { transform: translate(35px, -25px) scale(1.06); }
+          0%, 100% { transform: translateZ(0) translate(0, 0) scale(1); }
+          50% { transform: translateZ(0) translate(35px, -25px) scale(1.06); }
         }
         @keyframes drift2 {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          50% { transform: translate(-45px, 35px) scale(1.08); }
+          0%, 100% { transform: translateZ(0) translate(0, 0) scale(1); }
+          50% { transform: translateZ(0) translate(-45px, 35px) scale(1.08); }
         }
         @keyframes drift3 {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          50% { transform: translate(25px, 40px) scale(1.05); }
+          0%, 100% { transform: translateZ(0) translate(0, 0) scale(1); }
+          50% { transform: translateZ(0) translate(25px, 40px) scale(1.05); }
         }
         @keyframes emberRise {
-          0% { transform: translateY(0); opacity: 0; }
+          0% { transform: translateZ(0) translateY(0); opacity: 0; }
           10% { opacity: 0.9; }
           80% { opacity: 0.4; }
-          100% { transform: translateY(-420px); opacity: 0; }
+          100% { transform: translateZ(0) translateY(-420px); opacity: 0; }
         }
 
         .custom-scrollbar {
